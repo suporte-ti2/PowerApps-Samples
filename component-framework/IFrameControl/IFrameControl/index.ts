@@ -1,114 +1,131 @@
-/*
-	This file is part of the Microsoft PowerApps code samples.
-	Copyright (C) Microsoft Corporation.  All rights reserved.
-	This source code is intended only as a supplement to Microsoft Development Tools and/or
-	on-line documentation.  See these other materials for detailed information regarding
-	Microsoft code samples.
-
-	THIS CODE AND INFORMATION ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER
-	EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF
-	MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.
- */
-
 import { IInputs, IOutputs } from "./generated/ManifestTypes";
 
 export class IFrameControl implements ComponentFramework.StandardControl<IInputs, IOutputs> {
-	// Reference to Bing Map IFrame HTMLElement
-	private _bingMapIFrame: HTMLElement;
+  private _container: HTMLDivElement;
+  private _iframe!: HTMLIFrameElement;
+  private _placeholder!: HTMLDivElement;
 
-	// Reference to the control container HTMLDivElement
-	// This element contains all elements of our custom control example
-	private _container: HTMLDivElement;
+  private _rendered = false;
+  private _lastUrl: string | null = null;
 
-	// Flag if control view has been rendered
-	private _controlViewRendered: boolean;
+  public init(
+    context: ComponentFramework.Context<IInputs>,
+    notifyOutputChanged: () => void,
+    state: ComponentFramework.Dictionary,
+    container: HTMLDivElement
+  ): void {
+    this._container = container;
+    this._rendered = false;
+  }
 
-	/**
-	 * Used to initialize the control instance. Controls can kick off remote server calls and other initialization actions here.
-	 * Data-set values are not initialized here, use updateView.
-	 * @param context The entire property bag available to control via Context Object; It contains values as set up by the customizer mapped to property names defined in the manifest, as well as utility functions.
-	 * @param notifyOutputChanged A callback method to alert the framework that the control has new outputs ready to be retrieved asynchronously.
-	 * @param state A piece of data that persists in one session for a single user. Can be set at any point in a controls life cycle by calling 'setControlState' in the Mode interface.
-	 * @param container If a control is marked control-type='standard', it will receive an empty div element within which it can render its content.
-	 */
-	public init(
-		context: ComponentFramework.Context<IInputs>,
-		notifyOutputChanged: () => void,
-		state: ComponentFramework.Dictionary,
-		container: HTMLDivElement
-	): void {
-		this._container = container;
-		this._controlViewRendered = false;
-	}
+  public updateView(context: ComponentFramework.Context<IInputs>): void {
+    if (!this._rendered) {
+      this._rendered = true;
+      this.render();
+    }
 
-	/**
-	 * Called when any value in the property bag has changed. This includes field values, data-sets, global values such as container height and width, offline status, control metadata values such as label, visible, etc.
-	 * @param context The entire property bag available to control via Context Object; It contains values as set up by the customizer mapped to names defined in the manifest, as well as utility functions
-	 */
-	public updateView(context: ComponentFramework.Context<IInputs>): void {
-		if (!this._controlViewRendered) {
-			this._controlViewRendered = true;
-			this.renderBingMapIFrame();
-		}
+    // Ajusta tamanho para preencher o espaço do controle
+    this.resizeToAllocatedSpace(context);
 
-		const latitude = context.parameters.latitudeValue.raw;
-		const longitude = context.parameters.longitudeValue.raw;
-		if (latitude && longitude) {
-			this.updateBingMapURL(latitude, longitude);
-		}
-	}
+    // Lê URL do manifest (url)
+    const rawUrl = (context.parameters.url.raw ?? "").trim();
 
-	/**
-	 * Render IFrame HTML Element that hosts the Bing Map and appends the IFrame to the control container
-	 */
-	private renderBingMapIFrame(): void {
-		this._bingMapIFrame = this.createIFrameElement();
-		this._container.appendChild(this._bingMapIFrame);
-	}
+    // Se vazio → mostra placeholder, limpa iframe
+    if (!rawUrl) {
+      this.setPlaceholder(true, "Informe uma URL para exibir no iframe.");
+      this.setIframeSrc("about:blank");
+      this._lastUrl = null;
+      return;
+    }
 
-	/**
-	 * Updates the URL of the Bing Map IFrame to display the updated lat/long coordinates
-	 * @param latitude : latitude of center point of Bing map
-	 * @param longitude : longitude of center point of Bing map
-	 */
-	private updateBingMapURL(latitude: number, longitude: number): void {
-		// Bing Map API:
-		// https://learn.microsoft.com/bingmaps/articles/create-a-custom-map-url
+    // Validação mínima: só http/https (evita javascript:, data:, etc.)
+    const safeUrl = this.normalizeAndValidateUrl(rawUrl);
+    if (!safeUrl) {
+      this.setPlaceholder(true, "URL inválida. Use http:// ou https://");
+      this.setIframeSrc("about:blank");
+      this._lastUrl = null;
+      return;
+    }
 
-		// Provide bing map query string parameters to format and style map view
-		const bingMapUrlPrefix = "https://www.bing.com/maps/embed?h=400&w=300&cp=";
-		const bingMapUrlPostfix = "&lvl=12&typ=d&sty=o&src=SHELL&FORM=MBEDV8";
+    // Só atualiza se mudou
+    if (safeUrl !== this._lastUrl) {
+      this._lastUrl = safeUrl;
+      this.setPlaceholder(false);
+      this.setIframeSrc(safeUrl);
+    }
+  }
 
-		// Build the entire URL with the user provided latitude and longitude
-		const iFrameSrc = `${bingMapUrlPrefix + latitude}~${longitude}${bingMapUrlPostfix}`;
+  private render(): void {
+    // Container
+    this._container.classList.add("SampleControl_Container");
 
-		// Update the IFrame to point to the updated URL
-		this._bingMapIFrame.setAttribute("src", iFrameSrc);
-	}
+    // Placeholder (mensagens)
+    this._placeholder = document.createElement("div");
+    this._placeholder.className = "SampleControl_Placeholder";
+    this._placeholder.innerText = "Carregando...";
+    this._container.appendChild(this._placeholder);
 
-	/**
-	 * Helper method to create an IFrame HTML Element
-	 */
-	private createIFrameElement(): HTMLElement {
-		const iFrameElement: HTMLElement = document.createElement("iframe");
-		iFrameElement.setAttribute("class", "SampleControl_IFrame");
-		return iFrameElement;
-	}
+    // IFrame
+    this._iframe = document.createElement("iframe");
+    this._iframe.className = "SampleControl_IFrame";
+    this._iframe.setAttribute("src", "about:blank");
 
-	/**
-	 * It is called by the framework prior to a control receiving new data.
-	 * @returns an object based on nomenclature defined in manifest, expecting object[s] for property marked as "bound" or "output"
-	 */
-	public getOutputs(): IOutputs {
-		// no-op: method not leveraged by this example custom control
-		return {};
-	}
+    // Boas práticas para embed
+    this._iframe.setAttribute("loading", "lazy");
+    this._iframe.setAttribute("referrerpolicy", "no-referrer-when-downgrade");
 
-	/**
-	 * Called when the control is to be removed from the DOM tree. Controls should use this call for cleanup.
-	 * i.e. cancelling any pending remote calls, removing listeners, etc.
-	 */
-	public destroy(): void {
-		// no-op: method not leveraged by this example custom control
-	}
+    // Power BI gosta de fullscreen
+    this._iframe.setAttribute("allowfullscreen", "true");
+    this._iframe.setAttribute("allow", "fullscreen");
+
+    // Evita bordas
+    this._iframe.setAttribute("frameborder", "0");
+
+    this._container.appendChild(this._iframe);
+
+    // Placeholder inicial
+    this.setPlaceholder(true, "Informe uma URL para exibir no iframe.");
+  }
+
+  private resizeToAllocatedSpace(context: ComponentFramework.Context<IInputs>): void {
+    // allocatedWidth/Height são a forma correta de pegar o tamanho disponível no host (Canvas/Teams)
+    const w = Math.max(0, Math.floor(context.mode.allocatedWidth || 0));
+    const h = Math.max(0, Math.floor(context.mode.allocatedHeight || 0));
+
+    if (w > 0) this._container.style.width = `${w}px`;
+    if (h > 0) this._container.style.height = `${h}px`;
+  }
+
+  private normalizeAndValidateUrl(url: string): string | null {
+    try {
+      // Se o usuário passar sem protocolo, você pode optar por completar.
+      // Aqui eu NÃO completo automaticamente (pra evitar surpresas).
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  private setIframeSrc(src: string): void {
+    // Evita reflow desnecessário
+    if (this._iframe.getAttribute("src") !== src) {
+      this._iframe.setAttribute("src", src);
+    }
+  }
+
+  private setPlaceholder(visible: boolean, text?: string): void {
+    this._placeholder.style.display = visible ? "flex" : "none";
+    if (text !== undefined) this._placeholder.innerText = text;
+    this._iframe.style.display = visible ? "none" : "block";
+  }
+
+  public getOutputs(): IOutputs {
+    return {};
+  }
+
+  public destroy(): void {
+    // nada a limpar neste caso
+  }
 }
